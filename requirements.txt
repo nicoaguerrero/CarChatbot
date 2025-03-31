@@ -1,0 +1,5 @@
+Flask==3.1.0
+langchain-community
+langchain_openai
+faiss-cpu
+psycopg2
