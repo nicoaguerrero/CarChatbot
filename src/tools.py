@@ -7,7 +7,7 @@ class RagToolSchema(BaseModel):
     question: str
 @tool(args_schema=RagToolSchema)
 def retrieve(question: str):
-    """Retrieve information related to a query."""
+    """Busca en documentos de la concesionaria para responder preguntas de horarios, promociones y documentación necesaria"""
     retriever = current_app.vector_store.as_retriever(search_kwargs={"k":2})
     retriever_result = retriever.invoke(question)
     return "\n\n".join(doc.page_content for doc in retriever_result)

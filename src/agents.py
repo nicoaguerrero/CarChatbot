@@ -1,76 +1,31 @@
-from typing import Literal, Annotated, Sequence
+from typing import Annotated
 
-from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.types import Command
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.graph.message import add_messages
-from src.prompts import supervisor_prompt
 from typing_extensions import TypedDict
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
 
 from flask import current_app
 
-agents = ["rag", "dbquery"]
-
-class Router(TypedDict):
-    """Worker to route to next. If no workers needed, route to FINISH."""
-    next: Literal["rag", "dbquery", "FINISH"]
-
-class AgentState(TypedDict):
-    """The state of the agent."""
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-
-def create_agent(llm, tools):
-    llm_with_tools = llm.bind_tools(tools)
-    def chatbot(state: AgentState):
-        return {"messages": [llm_with_tools.invoke(state["messages"])]}
-
-    tool_node = ToolNode(tools=tools)
-
-    builder = StateGraph(AgentState)
-    builder.add_node("agent", chatbot)
-    builder.add_node("tools", tool_node)
-    builder.add_conditional_edges(
-        "agent",
-        tools_condition,
-    )
-    builder.add_edge("tools", "agent")
-    builder.set_entry_point("agent")
-    return builder.compile()
-def supervisor(state: MessagesState) -> Command[Literal["rag", "dbquery", "__end__"]]:
-    agent_names_str = ", ".join(agents)
-    formatted_supervisor_prompt = supervisor_prompt.format(agents=agent_names_str)
-    messages = [
-        {"role": "system", "content": formatted_supervisor_prompt},
-    ] + state["messages"]
-    response = current_app.llm.with_structured_output(Router).invoke(messages)
-    goto = response["next"]
-    if goto == "FINISH":
-        goto = END
-    return Command(goto=goto)
-
-def rag(state: MessagesState) -> Command[Literal["supervisor"]]:
-    result = current_app.rag_agent.invoke(state)
-    return Command(
-        update={"messages": [
-            HumanMessage(content=result["messages"][-1].content, name="rag"),
-        ]},
-        goto="supervisor",
-    )
-
-def dbquery(state: MessagesState) -> Command[Literal["supervisor"]]:
-    result = current_app.dbquery_agent.invoke(state)
-    return Command(
-        update={"messages": [
-            HumanMessage(content=result["messages"][-1].content, name="dbquery"),
-        ]},
-        goto="supervisor",
-    )
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
 
 def setup_graph():
-    builder = StateGraph(MessagesState)
-    builder.add_edge(START, "supervisor")
-    builder.add_node("supervisor", supervisor)
-    builder.add_node("rag", rag)
-    builder.add_node("dbquery", dbquery)
-    return builder.compile()
+    tools = current_app.tools
+    llm_with_tools = current_app.llm.bind_tools(tools)
+    checkpointer = current_app.checkpointer
+
+    def chatbot(state: State):
+        return {"messages": [llm_with_tools.invoke(state["messages"])]}
+
+    graph = StateGraph(State)
+    graph.add_node("chatbot", chatbot)
+    tool_node = ToolNode(tools=tools)
+    graph.add_node("tools", tool_node)
+    graph.add_conditional_edges(
+        "chatbot",
+        tools_condition
+    )
+    graph.add_edge("tools", "chatbot")
+    graph.set_entry_point("chatbot")
+    return graph.compile(checkpointer=checkpointer)
