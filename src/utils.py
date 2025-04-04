@@ -5,11 +5,15 @@ import os
 import requests
 import json
 
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from src.prompts import system_prompt
+
 
 def setup_vectorstore():
     embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
@@ -83,10 +87,27 @@ def process_whatsapp_message(body):
     message = body["entry"][0]["changes"][0]["value"]["messages"][0]
     message_body = message["text"]["body"]
 
-    #response = generate_response(message_body)
-    response = "Hola"
+    # Grafo
+    config = {"configurable": {"thread_id": wa_id}}
+    current_state = current_app.graph.get_state(config)
+    existing_messages: list[BaseMessage] = current_state.values.get("messages", []) if current_state else []
 
-    data = get_text_message_input(current_app.RECIPIENT_WAID, response)
+    messages_to_send = []
+    if not existing_messages:
+        messages_to_send.append(SystemMessage(content=system_prompt))
+        messages_to_send.append(HumanMessage(content=message_body))
+    else:
+        messages_to_send.append(HumanMessage(content=message_body))
+
+    response = []
+    events = current_app.graph.stream(
+        {"messages": messages_to_send},
+        config,
+        stream_mode="values")
+    for event in events:
+        response.append(event["messages"][-1].content)
+
+    data = get_text_message_input(current_app.RECIPIENT_WAID, response[-1])
     send_message(data)
 
 
