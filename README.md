@@ -38,4 +38,3 @@
     ```bash
     ngrok http 8000 --domain domain.ngrok-free.app
     ```
-    Copia la URL HTTPS que te proporciona ngrok (ej. `https://<id_aleatorio>.ngrok-free.app`).
